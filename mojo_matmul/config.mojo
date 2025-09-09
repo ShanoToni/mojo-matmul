@@ -1,0 +1,2 @@
+alias MATMUL_DIM_SIZE = 4096
+alias TPB = 32

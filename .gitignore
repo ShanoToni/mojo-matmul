@@ -1,0 +1,16 @@
+# pixi environments
+.pixi
+*.egg-info
+*.lock
+# misc
+*.DS_Store
+__pycache__
+
+# Mojo artifacts
+*.mojopkg
+
+# rules
+.cursor/
+
+# llvm
+*.ll

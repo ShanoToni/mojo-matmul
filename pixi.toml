@@ -1,0 +1,30 @@
+[workspace]
+channels = ["https://conda.modular.com/max-nightly", "conda-forge"]
+name = "nbody"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[feature.cuda]
+system-requirements = { cuda = "12" }
+channels = ["nvidia"]
+
+[dependencies]
+python = "==3.12"
+numpy = ">=2.3.2,<3"
+max = "*"  # includes `mojo-compiler`
+mojo = "*" # includes lsp, debugger, formatter etc.
+
+[feature.cuda.pypi-dependencies]
+torch = { version = "==2.7.1", index = "https://download.pytorch.org/whl/cu128" }
+
+[environments]
+cuda = { features = ["cuda"], solve-group = "cuda" }
+default = { features = ["cuda"] }
+
+[tasks]
+torch_matmul = "python matmul.py --torch --M 4096 --N 4096 --K 4096"
+mojo_naive = "mojo package ./op -o ./op/op.mojopkg && python matmul.py --mojo --M 4096 --N 4096 --K 4096 --impl naive"
+mojo_shared = "mojo package ./op -o ./op/op.mojopkg && python matmul.py --mojo --M 4096 --N 4096 --K 4096 --impl shared"
+mojo_async_cpy = "mojo package ./op -o ./op/op.mojopkg && python matmul.py --mojo --M 4096 --N 4096 --K 4096 --impl async_cpy"
+
+
