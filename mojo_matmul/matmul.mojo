@@ -10,7 +10,7 @@ import sys
 from config import MATMUL_DIM_SIZE, TPB
 from naive import naive_matmul, benchmark_naive
 from shared import shared_matmul, benchmark_shared
-
+from tiled import tiled, benchmark_tiled
 
 alias dtype = DType.float32
 
@@ -18,12 +18,11 @@ alias M = MATMUL_DIM_SIZE
 alias N = MATMUL_DIM_SIZE
 
 alias K = MATMUL_DIM_SIZE
-alias NUM_BLOCKS_ROW = (M + TPB - 1) // TPB
-alias NUM_BLOCKS_COL = (N + TPB - 1) // TPB
+alias NUM_BLOCKS_ROW = (M + 32 - 1) // 32
+alias NUM_BLOCKS_COL = (N + 32 - 1) // 32
 
 
-
-def init_data[M:Int, N:Int, K:Int]() -> (PythonObject, PythonObject):
+def init_data[M: Int, N: Int, K: Int]() -> (PythonObject, PythonObject):
     np = Python.import_module("numpy")
 
     np_a = np.random.randint(low=-32, high=32, size=(M * K), dtype=np.int32)
@@ -35,12 +34,9 @@ def init_data[M:Int, N:Int, K:Int]() -> (PythonObject, PythonObject):
     return np_a, np_b
 
 
-
 def main():
     if len(sys.argv()) != 2:
-        print(
-            "Usage: pixi run mojo --[naive | shared]"
-        )
+        print("Usage: pixi run mojo --[naive | shared | tiled]")
         return
     alias a_layout = Layout.row_major(M, K)
     alias b_layout = Layout.row_major(K, N)
@@ -67,26 +63,40 @@ def main():
         b_tensor = LayoutTensor[dtype, b_layout](b.unsafe_ptr())
         c_tensor = LayoutTensor[dtype, c_layout](c.unsafe_ptr())
 
-
         if sys.argv()[1] == "naive":
-            benchmark_naive[a_layout, b_layout, c_layout,](ctx, a_tensor, b_tensor, c_tensor)
+            benchmark_naive[
+                a_layout,
+                b_layout,
+                c_layout,
+            ](ctx, a_tensor, b_tensor, c_tensor)
         elif sys.argv()[1] == "shared":
-            benchmark_shared[a_layout, b_layout, c_layout,](ctx, a_tensor, b_tensor, c_tensor)
+            benchmark_shared[
+                a_layout,
+                b_layout,
+                c_layout,
+            ](ctx, a_tensor, b_tensor, c_tensor)
+        elif sys.argv()[1] == "tiled":
+            benchmark_tiled[
+                a_layout,
+                b_layout,
+                c_layout,
+            ](ctx, a_tensor, b_tensor, c_tensor)
         else:
-            print(
-                "Unknown commandline arg pased"
-            )
+            print("Unknown commandline arg pased")
             return
 
         # Verify result
         expected = ctx.enqueue_create_buffer[dtype](M * N)
         exp_tensor = LayoutTensor[dtype, c_layout](expected.unsafe_ptr())
-        ctx.enqueue_function[naive_matmul[
-            a_layout,
-            b_layout,
-            c_layout,
-            M, N, K
-        ]](a_tensor, b_tensor, exp_tensor, grid_dim = (NUM_BLOCKS_ROW, NUM_BLOCKS_COL), block_dim = (TPB, TPB))
+        ctx.enqueue_function[
+            naive_matmul[a_layout, b_layout, c_layout, M, N, K]
+        ](
+            a_tensor,
+            b_tensor,
+            exp_tensor,
+            grid_dim=(NUM_BLOCKS_ROW, NUM_BLOCKS_COL),
+            block_dim=(32, 32),
+        )
         ctx.synchronize()
 
         with c.map_to_host() as c_host:

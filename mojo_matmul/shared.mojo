@@ -41,10 +41,9 @@ fn shared_matmul[
     shared_a = tb[dtype]().row_major[TILE_SIZE, TILE_SIZE]().shared().alloc()
     shared_b = tb[dtype]().row_major[TILE_SIZE, TILE_SIZE]().shared().alloc()
 
-
     var acc: c.element_type = 0
-    #@parameter
-    for tile_idx in range((M + TILE_SIZE -1) // TILE_SIZE):
+    # @parameter
+    for tile_idx in range((M + TILE_SIZE - 1) // TILE_SIZE):
         if tiled_m < M and (tile_idx * TILE_SIZE + loc_n) < K:
             shared_a[loc_m, loc_n] = a[tiled_m, tile_idx * TILE_SIZE + loc_n]
         if (tile_idx * TILE_SIZE + loc_m) < K and tiled_n < N:
@@ -52,7 +51,7 @@ fn shared_matmul[
 
         barrier()
         if tiled_m < M and tiled_n < N:
-            #@parameter
+            # @parameter
             for k in range(min(TILE_SIZE, K - (tile_idx * TILE_SIZE))):
                 acc += shared_a[loc_m, k] * shared_b[k, loc_n]
 
@@ -62,37 +61,45 @@ fn shared_matmul[
 
 
 fn benchmark_shared[
-        a_layout: Layout,
-        b_layout: Layout,
-        c_layout: Layout,
-    ](ctx: DeviceContext, a_tensor: LayoutTensor, b_tensor: LayoutTensor, c_tensor: LayoutTensor) raises :
-        time = Python.import_module("time")
+    a_layout: Layout,
+    b_layout: Layout,
+    c_layout: Layout,
+](
+    ctx: DeviceContext,
+    a_tensor: LayoutTensor,
+    b_tensor: LayoutTensor,
+    c_tensor: LayoutTensor,
+) raises:
+    time = Python.import_module("time")
 
-        # Warmup
-        ctx.enqueue_function[shared_matmul[
-                a_layout,
-                b_layout,
-                c_layout,
-                M, N, K
-            ]](a_tensor, b_tensor, c_tensor, grid_dim = (NUM_BLOCKS_ROW, NUM_BLOCKS_COL), block_dim = (TPB, TPB))
+    # Warmup
+    ctx.enqueue_function[shared_matmul[a_layout, b_layout, c_layout, M, N, K]](
+        a_tensor,
+        b_tensor,
+        c_tensor,
+        grid_dim=(NUM_BLOCKS_ROW, NUM_BLOCKS_COL),
+        block_dim=(TPB, TPB),
+    )
+    ctx.synchronize()
+
+    start = time.monotonic()
+    for _ in range(10):
+        ctx.enqueue_function[
+            shared_matmul[a_layout, b_layout, c_layout, M, N, K]
+        ](
+            a_tensor,
+            b_tensor,
+            c_tensor,
+            grid_dim=(NUM_BLOCKS_ROW, NUM_BLOCKS_COL),
+            block_dim=(TPB, TPB),
+        )
         ctx.synchronize()
 
+    end = time.monotonic()
 
-        start = time.monotonic()
-        for _ in range(10):
-            ctx.enqueue_function[shared_matmul[
-                    a_layout,
-                    b_layout,
-                    c_layout,
-                    M, N, K
-            ]](a_tensor, b_tensor, c_tensor, grid_dim = (NUM_BLOCKS_ROW, NUM_BLOCKS_COL), block_dim = (TPB, TPB))
-            ctx.synchronize()
+    elapsed = (end - start) / Float64(10)
+    flops = 2.0 * Float64(M) * Float64(N) * Float64(K)
+    gflops = (flops / elapsed) / 1e9
 
-        end = time.monotonic()
-
-        elapsed = (end - start) / Float64(10)
-        flops = 2.0 * Float64(M) * Float64(N) * Float64(K)
-        gflops = (flops / elapsed) / 1e9
-
-        print("Kernel avg:", elapsed * 1e3, "ms")
-        print("Perf:", gflops, "GFLOP/s")
+    print("Kernel avg:", elapsed * 1e3, "ms")
+    print("Perf:", gflops, "GFLOP/s")
