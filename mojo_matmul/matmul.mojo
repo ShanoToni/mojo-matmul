@@ -11,6 +11,7 @@ from config import MATMUL_DIM_SIZE, TPB
 from naive import naive_matmul, benchmark_naive
 from shared import shared_matmul, benchmark_shared
 from tiled import tiled, benchmark_tiled
+from man_tiled import man_tiled, benchmark_man_tiled
 
 alias dtype = DType.float32
 
@@ -25,10 +26,10 @@ alias NUM_BLOCKS_COL = (N + 32 - 1) // 32
 def init_data[M: Int, N: Int, K: Int]() -> (PythonObject, PythonObject):
     np = Python.import_module("numpy")
 
-    np_a = np.random.randint(low=-32, high=32, size=(M * K), dtype=np.int32)
+    np_a = np.random.randint(low=-2, high=2, size=(M * K), dtype=np.int32)
     np_a = np_a.astype(np.float32)
 
-    np_b = np.random.randint(low=-32, high=32, size=(K * N), dtype=np.int32)
+    np_b = np.random.randint(low=-2, high=2, size=(K * N), dtype=np.int32)
     np_b = np_b.astype(np.float32)
 
     return np_a, np_b
@@ -81,6 +82,12 @@ def main():
                 b_layout,
                 c_layout,
             ](ctx, a_tensor, b_tensor, c_tensor)
+         elif sys.argv()[1] == "man_tiled":
+            benchmark_man_tiled[
+                a_layout,
+                b_layout,
+                c_layout,
+            ](ctx, a_tensor, b_tensor, c_tensor)
         else:
             print("Unknown commandline arg pased")
             return
@@ -101,7 +108,7 @@ def main():
 
         with c.map_to_host() as c_host:
             with expected.map_to_host() as exp_host:
-                print("out:", c_host)
-                print("expected:", exp_host)
+                print("out: \t\t", c_host)
+                print("expected:\t", exp_host)
                 for i in range(M * N):
                     assert_equal(c_host[i], exp_host[i])

@@ -22,7 +22,7 @@ alias NUM_BLOCKS_ROW = (M + TPB - 1) // TPB
 alias NUM_BLOCKS_COL = (N + (TPB // TILE) - 1) // TPB
 
 
-fn tiled[
+fn man_tiled[
     a_layout: Layout,
     b_layout: Layout,
     c_layout: Layout,
@@ -35,8 +35,6 @@ fn tiled[
     b: LayoutTensor[mut=True, dtype, b_layout],
     c: LayoutTensor[mut=True, dtype, c_layout],
 ):
-    alias simd = simd_width_of[dtype]()
-
     # Indexing
     m = block_dim.y * block_idx.y + thread_idx.y
     n = block_dim.x * block_idx.x + thread_idx.x
@@ -47,7 +45,6 @@ fn tiled[
     c_tile = c.tile[BLOCK_DIM_SIZE, BLOCK_DIM_SIZE](
         block_idx.y, block_idx.x
     ).tile[TILE, 1](loc_m, loc_n)
-    # c_vec = c_tile.vectorize[simd]()
 
     a_smem = (
         tb[dtype]().row_major[BLOCK_DIM_SIZE, BLOCK_DIM_SIZE]().shared().alloc()
@@ -57,33 +54,24 @@ fn tiled[
         tb[dtype]().row_major[BLOCK_DIM_SIZE, BLOCK_DIM_SIZE]().shared().alloc()
     )
 
+    alias simd = simd_width_of[dtype]()
+
     acc = tb[dtype]().layout[TILE]().local().alloc().fill(0)
-    # acc_vec = acc.vectorize[simd]()
 
     # loop over tiles with offset of BLOCK_DIM_SIZE
     for tile_idx_k in range(K // BLOCK_DIM_SIZE):
-        # create tiles
-        alias load_a_layout = Layout.row_major(
-            BLOCK_DIM_SIZE // TPB, BLOCK_DIM_SIZE
-        )
-        alias load_b_layout = Layout.row_major(
-            BLOCK_DIM_SIZE, BLOCK_DIM_SIZE // TPB
-        )
-        var a_tile = a.tile[BLOCK_DIM_SIZE, BLOCK_DIM_SIZE](
-            block_idx.y, tile_idx_k
-        )
-        var b_tile = b.tile[BLOCK_DIM_SIZE, BLOCK_DIM_SIZE](
-            tile_idx_k, block_idx.x
-        )
-        copy_dram_to_sram_async[thread_layout=load_a_layout](
-            a_smem.vectorize[simd, 1](), a_tile.vectorize[simd, 1]()
-        )
-        copy_dram_to_sram_async[thread_layout=load_b_layout](
-            b_smem.vectorize[1, simd](), b_tile.vectorize[1, simd]()
-        )
+        k_base = tile_idx_k * BLOCK_DIM_SIZE
+        tiled_m = (block_idx.y * BLOCK_DIM_SIZE) + loc_m * TILE
+
+        @parameter
+        for t in range(TILE):
+            src_k = tiled_m + t
+            a_smem[loc_m * TILE + t, loc_n] = a[src_k, k_base + loc_n]
+
+            src_k = k_base + loc_m * TILE + t
+            b_smem[loc_m * TILE + t, loc_n] = b[src_k, n]
 
         # Wait for all asynchronous copies to complete.
-        async_copy_wait_all()
         barrier()
 
         for k in range(BLOCK_DIM_SIZE):
@@ -98,10 +86,9 @@ fn tiled[
         barrier()
 
     c_tile.copy_from(acc)
-    #c_vec.copy_from(vec_acc)
 
 
-fn benchmark_tiled[
+fn benchmark_man_tiled[
     a_layout: Layout,
     b_layout: Layout,
     c_layout: Layout,
@@ -114,7 +101,7 @@ fn benchmark_tiled[
     time = Python.import_module("time")
 
     # Warmup
-    ctx.enqueue_function[tiled[a_layout, b_layout, c_layout, M, N, K]](
+    ctx.enqueue_function[man_tiled[a_layout, b_layout, c_layout, M, N, K]](
         a_tensor,
         b_tensor,
         c_tensor,
@@ -125,7 +112,7 @@ fn benchmark_tiled[
 
     start = time.monotonic()
     for _ in range(10):
-        ctx.enqueue_function[tiled[a_layout, b_layout, c_layout, M, N, K]](
+        ctx.enqueue_function[man_tiled[a_layout, b_layout, c_layout, M, N, K]](
             a_tensor,
             b_tensor,
             c_tensor,
